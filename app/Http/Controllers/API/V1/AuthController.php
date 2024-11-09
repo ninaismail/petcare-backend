@@ -10,68 +10,109 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
+use Illuminate\Support\Facades\Log;
 
 class AuthController extends Controller
 {
-    // User registration
+    // Pet Owner registration
     public function register(Request $request)
     {
+        // Validate incoming request
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
+            'email' => 'required|string|email|max:255|unique:pet_owners',
             'phone' => 'required|numeric|digits_between:8,15',
-            'password' => 'required|string|min:6|confirmed',
+            'password' => 'required|string|min:8|confirmed',
         ]);
-
-        if($validator->fails()){
+    
+        // If validation fails, return the validation errors
+        if ($validator->fails()) {
             return response()->json($validator->errors()->toJson(), 400);
         }
-
-        $user = PetOwner::create([
+    
+        // Create the new pet owner
+        $petOwner = PetOwner::create([
             'name' => $request->get('name'),
             'email' => $request->get('email'),
             'phone' => $request->get('phone'),
             'password' => Hash::make($request->get('password')),
         ]);
-
-        $token = JWTAuth::fromUser($user);
-
-        return response()->json(compact('user','token'), 201);
+    
+        // Generate the JWT token for the newly registered pet owner
+        $token = JWTAuth::fromUser($petOwner);
+    
+        // Return the response with the pet owner data and JWT token
+        return response()->json([
+            'pet_owner' => $petOwner,
+            'access_token' => $token
+        ], 201);
     }
 
-    // User login
     public function login(Request $request)
     {
+        // Validate incoming request - Make sure email and password are provided
         $credentials = $request->only('email', 'password');
 
+        // Check if email and password are not empty
+        if (empty($credentials['email']) || empty($credentials['password'])) {
+            return response()->json(['error' => 'Email and password are required'], 400);
+        }
+
+        // Check if the pet owner exists
+        $petOwner = PetOwner::where('email', $credentials['email'])->first();
+
+        if (!$petOwner) {
+            return response()->json(['error' => 'Invalid email or password'], 401);
+        }
+
+        // Check password validity
+        if (!Hash::check($credentials['password'], $petOwner->password)) {
+            return response()->json(['error' => 'Invalid credentials'], 401);
+        }
+
         try {
-            if (! $token = JWTAuth::attempt($credentials)) {
-                return response()->json(['error' => 'Invalid credentials'], 401);
-            }
+            // Generate JWT token for the pet owner
+            $token = JWTAuth::fromUser($petOwner);
 
-            // Get the authenticated user.
-            $user = auth()->user();
-
-            // (optional) Attach the role to the token.
-            $token = JWTAuth::claims(['role' => $user->role])->fromUser($user);
-
-            return response()->json(compact('token'));
+            // Return the access token and pet owner information
+            return response()->json([
+                'access_token' => $token,
+                'pet_owner' => $petOwner,
+            ]);
         } catch (JWTException $e) {
-            return response()->json(['error' => 'Could not create token'], 500);
+            // Return error response if token generation fails
+            return response()->json(['error' => 'Could not create token, please try again later'], 500);
         }
     }
 
-    // Get authenticated user
-    public function getUser()
+    public function getPetOwner(Request $request)
     {
-        return response()->json(Auth::user());
+        // The petOwner should already be authenticated by the JwtMiddleware
+        $petOwner = auth()->user();  // Or JWTAuth::user();
+        
+        if (!$petOwner) {
+            return response()->json(['error' => 'Pet owner not found'], 404);
+        }
+    
+        return response()->json([
+            'pet_owner' => $petOwner,
+        ]);
     }
+    
 
-    // User logout
-    public function logout()
+    // logout
+    public function logout(Request $request)
     {
-        JWTAuth::invalidate(JWTAuth::getToken());
-
-        return response()->json(['message' => 'Successfully logged out']);
+        try {
+            // Invalidate the token
+            JWTAuth::invalidate(JWTAuth::getToken());
+    
+            // Return a success message
+            return response()->json(['message' => 'Successfully logged out']);
+        } catch (JWTException $e) {
+            // Handle error if token invalidation fails
+            return response()->json(['error' => 'Failed to logout, please try again'], 500);
+        }
     }
+    
 }
